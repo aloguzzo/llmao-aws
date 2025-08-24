@@ -37,18 +37,18 @@ log/
 *.swp
 *.swo
 
-# Keys and secrets (never commit)
+# Keys and secrets
 *.pem
 *.key
 *.pub
 llm-deploy
 llm-deploy.pub
 
-# Optional frontend leftovers (in case you add UI bits later)
+# Optional frontend leftovers
 node_modules/
 dist/
 build/
 
-# Python virtual envs (in case you add helper scripts)
+# Python virtual envs
 .venv/
 venv/
