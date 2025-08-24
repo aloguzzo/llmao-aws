@@ -1,0 +1,8 @@
+* text=auto
+*.sh text eol=lf
+*.tpl text eol=lf
+*.tf text eol=lf
+*.tfvars text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Caddyfile text eol=lf

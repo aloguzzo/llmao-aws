@@ -1,0 +1,54 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# JetBrains IDE
+.idea/
+*.iml
+
+# Terraform
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+crash.*.log
+# Keep the lock file committed for reproducible provider versions:
+# .terraform.lock.hcl (do NOT ignore)
+
+# Terraform variables (keep secrets out)
+*.tfvars
+*.tfvars.json
+
+# Docker Compose runtime env (generated on the EC2 host)
+.env
+.env.*
+compose/.env
+
+# Local override compose files (developer-only)
+docker-compose.override.yml
+compose.override.yml
+
+# Logs
+*.log
+logs/
+log/
+
+# Editor/OS
+*.swp
+*.swo
+
+# Keys and secrets (never commit)
+*.pem
+*.key
+*.pub
+llm-deploy
+llm-deploy.pub
+
+# Optional frontend leftovers (in case you add UI bits later)
+node_modules/
+dist/
+build/
+
+# Python virtual envs (in case you add helper scripts)
+.venv/
+venv/
