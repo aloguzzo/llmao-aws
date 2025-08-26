@@ -15,29 +15,29 @@ Public, reproducible deployment of OpenWebUI (web UI) fronted by Caddy (automati
 
 ```mermaid
 flowchart LR
-  Internet((Internet)) -->|HTTPS 443 / HTTP 80| R53[Route 53\nA record: llmao.loguzzo.it]
-  R53 --> EC2[EC2 t4g.large (ARM64)\nUbuntu 24.04\nDocker + Compose]
+  Internet((Internet)) -->|HTTPS 443 / HTTP 80| R53["Route 53<br/>A record: llmao.loguzzo.it"]
+  R53 --> EC2["EC2 t4g.large (ARM64)<br/>Ubuntu 24.04<br/>Docker + Compose"]
 
   subgraph "EC2 Host"
-    Caddy[Caddy\n:80/:443] -->|reverse proxy| OWUI[OpenWebUI\n:8080]
-    OWUI ---|internal only| LLM[LiteLLM\n:4000]
-    Caddy -.->|ACME| LE[Let's Encrypt]
-    Vol1[(Docker volume:\nopenwebui-data)]
-    Vol2[(Docker volume:\ncaddy-data, caddy-config)]
+    Caddy["Caddy<br/>:80/:443"] -->|reverse proxy| OWUI["OpenWebUI<br/>:8080"]
+    OWUI ---|internal only| LLM["LiteLLM<br/>:4000"]
+    Caddy -.->|ACME| LE["Let's Encrypt"]
+    Vol1[("Docker volume:<br/>openwebui-data")]
+    Vol2[("Docker volume:<br/>caddy-data, caddy-config")]
     OWUI --- Vol1
     Caddy --- Vol2
   end
 
   subgraph "AWS Control"
-    SSM[SSM Parameter Store\n/app/litellm/openai_api_key\n/app/github/deploy_key_priv]
-    SSM_Agent[SSM Agent\n(Session Manager)]
-    S3[S3 Bucket\nTerraform state]
-    DDB[DynamoDB Table\nState lock]
+    SSM["SSM Parameter Store<br/>/app/litellm/openai_api_key<br/>/app/github/deploy_key_priv"]
+    SSM_Agent["SSM Agent<br/>(Session Manager)"]
+    S3["S3 Bucket<br/>Terraform state"]
+    DDB["DynamoDB Table<br/>State lock"]
   end
 
   SSM --> EC2
   SSM_Agent --- EC2
-  S3 -. Terraform state .- Dev[(Local Terraform)]
+  S3 -. Terraform state .- Dev[("Local Terraform")]
   DDB -. State lock .- Dev
 ```
 
