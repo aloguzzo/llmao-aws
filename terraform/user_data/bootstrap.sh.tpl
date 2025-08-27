@@ -37,8 +37,8 @@ curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/
 chmod a+r /etc/apt/keyrings/docker.gpg
 ARCH="arm64"
 # Quote VERSION_CODENAME to avoid word splitting/globbing
-echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-$(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
@@ -49,20 +49,20 @@ mkdir -p /opt/app
 chown ubuntu:ubuntu /opt/app
 
 # If private repo, fetch deploy key from SSM and configure SSH for ubuntu user
-if [ "${USE_PRIVATE}" = "true" ]; then
+if [ "$USE_PRIVATE" = "true" ]; then
   log "Configuring SSH deploy key for GitHub"
   sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
   chmod 700 /home/ubuntu/.ssh
 
   # Fetch private key (ed25519) from SSM: /app/github/deploy_key_priv
-  DEPLOY_KEY="$(aws ssm get-parameter --with-decryption --name "/app/github/deploy_key_priv" --region "${AWS_REGION}" --query 'Parameter.Value' --output text 2>/dev/null || true)"
-  if [ -z "${DEPLOY_KEY}" ]; then
+  DEPLOY_KEY="$(aws ssm get-parameter --with-decryption --name "/app/github/deploy_key_priv" --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)"
+  if [ -z "$DEPLOY_KEY" ]; then
     log "ERROR: SSM parameter /app/github/deploy_key_priv not found or empty."
     exit 1
   fi
 
-  # Write key content securely as ubuntu user
-  sudo -u ubuntu bash -c 'umask 177 && printf "%s\n" "'"${DEPLOY_KEY}"'" > /home/ubuntu/.ssh/id_ed25519'
+  # Write key content securely as ubuntu user (avoid ${...} to not clash with Terraform templating)
+  sudo -u ubuntu env DEPLOY_KEY="$DEPLOY_KEY" bash -lc 'umask 177; printf "%s\n" "$DEPLOY_KEY" > /home/ubuntu/.ssh/id_ed25519'
   chown ubuntu:ubuntu /home/ubuntu/.ssh/id_ed25519
   chmod 600 /home/ubuntu/.ssh/id_ed25519
 
@@ -77,18 +77,18 @@ CFG
   chown ubuntu:ubuntu /home/ubuntu/.ssh/config
   chmod 600 /home/ubuntu/.ssh/config
 
-  # Append GitHub host keys as ubuntu user (avoid sudo redirection issue)
+  # Append GitHub host keys as ubuntu user (fix sudo redirection issue)
   ssh-keyscan -t rsa,ecdsa,ed25519 github.com 2>/dev/null | sudo -u ubuntu tee -a /home/ubuntu/.ssh/known_hosts >/dev/null
   chown ubuntu:ubuntu /home/ubuntu/.ssh/known_hosts
   chmod 644 /home/ubuntu/.ssh/known_hosts
 fi
 
-log "Clone or update repository ${GITHUB_REPO_URL}"
+log "Clone or update repository $GITHUB_REPO_URL"
 if [ ! -d "/opt/app/.git" ]; then
-  if [ "${USE_PRIVATE}" = "true" ]; then
-    sudo -u ubuntu git clone "${GITHUB_REPO_URL}" /opt/app
+  if [ "$USE_PRIVATE" = "true" ]; then
+    sudo -u ubuntu git clone "$GITHUB_REPO_URL" /opt/app
   else
-    git clone "${GITHUB_REPO_URL}" /opt/app
+    git clone "$GITHUB_REPO_URL" /opt/app
     chown -R ubuntu:ubuntu /opt/app
   fi
 else
@@ -105,18 +105,18 @@ fi
 
 log "Create compose .env with runtime configuration"
 ENV_FILE="/opt/app/compose/.env"
-: > "${ENV_FILE}"
+: > "$ENV_FILE"
 {
-  echo "CADDY_DOMAIN=${DOMAIN_NAME}"
-  echo "ACME_EMAIL=${ACME_EMAIL}"
-} >> "${ENV_FILE}"
+  echo "CADDY_DOMAIN=$DOMAIN_NAME"
+  echo "ACME_EMAIL=$ACME_EMAIL"
+} >> "$ENV_FILE"
 
 # Fetch OpenAI API key from SSM if present: /app/litellm/openai_api_key
-OPENAI_API_KEY="$(aws ssm get-parameter --with-decryption --name "/app/litellm/openai_api_key" --region "${AWS_REGION}" --query 'Parameter.Value' --output text 2>/dev/null || true)"
-if [ -n "${OPENAI_API_KEY}" ]; then
-  echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "${ENV_FILE}"
+OPENAI_API_KEY="$(aws ssm get-parameter --with-decryption --name "/app/litellm/openai_api_key" --region "$AWS_REGION" --query 'Parameter.Value' --output text 2>/dev/null || true)"
+if [ -n "$OPENAI_API_KEY" ]; then
+  echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$ENV_FILE"
 fi
-chown ubuntu:ubuntu "${ENV_FILE}"
+chown ubuntu:ubuntu "$ENV_FILE"
 
 log "Docker Compose pull and up"
 cd /opt/app/compose
