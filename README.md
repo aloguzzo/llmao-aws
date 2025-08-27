@@ -79,7 +79,7 @@ flowchart LR
 
 ## One-time setup
 
-1) Create/verify remote Terraform state (S3 + DynamoDB)
+1. Create/verify remote Terraform state (S3 + DynamoDB)
 
 macOS (zsh)
 ```zsh
@@ -126,7 +126,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 ```
 
-2) Prepare secrets in AWS SSM Parameter Store (eu-central-1)
+1. Prepare secrets in AWS SSM Parameter Store (eu-central-1)
 
 - GitHub Deploy Key (private key) for the repo (read-only), previously added in GitHub under Repo Settings → Deploy Keys.
 - OpenAI API key for LiteLLM.

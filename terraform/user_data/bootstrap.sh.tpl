@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Terraform template variables (stubs for ShellCheck only; harmless at runtime)
+# shellcheck disable=SC2034
+domain_name='' acme_email='' aws_region='' github_repo_url='' use_private=''
+
+# Real variables: values are injected by Terraform templatefile() at render time
 DOMAIN_NAME="${domain_name}"
 ACME_EMAIL="${acme_email}"
 AWS_REGION="${aws_region}"
 GITHUB_REPO_URL="${github_repo_url}"
 USE_PRIVATE="${use_private}"
+readonly DOMAIN_NAME ACME_EMAIL AWS_REGION GITHUB_REPO_URL USE_PRIVATE
 
 log() { echo "[$(date -Is)] $*"; }
 
@@ -30,8 +36,9 @@ install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
 ARCH="arm64"
+# Quote VERSION_CODENAME to avoid word splitting/globbing
 echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-$(. /etc/os-release && echo ${VERSION_CODENAME}) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+$(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
@@ -54,9 +61,8 @@ if [ "${USE_PRIVATE}" = "true" ]; then
     exit 1
   fi
 
-  # Write key content securely
+  # Write key content securely as ubuntu user
   sudo -u ubuntu bash -c 'umask 177 && printf "%s\n" "'"${DEPLOY_KEY}"'" > /home/ubuntu/.ssh/id_ed25519'
-
   chown ubuntu:ubuntu /home/ubuntu/.ssh/id_ed25519
   chmod 600 /home/ubuntu/.ssh/id_ed25519
 
@@ -71,7 +77,8 @@ CFG
   chown ubuntu:ubuntu /home/ubuntu/.ssh/config
   chmod 600 /home/ubuntu/.ssh/config
 
-  sudo -u ubuntu ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> /home/ubuntu/.ssh/known_hosts 2>/dev/null
+  # Append GitHub host keys as ubuntu user (avoid sudo redirection issue)
+  ssh-keyscan -t rsa,ecdsa,ed25519 github.com 2>/dev/null | sudo -u ubuntu tee -a /home/ubuntu/.ssh/known_hosts >/dev/null
   chown ubuntu:ubuntu /home/ubuntu/.ssh/known_hosts
   chmod 644 /home/ubuntu/.ssh/known_hosts
 fi
@@ -86,7 +93,8 @@ if [ ! -d "/opt/app/.git" ]; then
   fi
 else
   cd /opt/app
-  sudo -u ubuntu git pull --ff-only || git fetch --all --prune
+  # Ensure both pull and fallback fetch run as ubuntu
+  sudo -u ubuntu bash -lc 'git pull --ff-only || git fetch --all --prune'
 fi
 
 # Compose expects /opt/app/compose/compose.yml and /opt/app/caddy/Caddyfile
@@ -98,8 +106,10 @@ fi
 log "Create compose .env with runtime configuration"
 ENV_FILE="/opt/app/compose/.env"
 : > "${ENV_FILE}"
-echo "CADDY_DOMAIN=${DOMAIN_NAME}" >> "${ENV_FILE}"
-echo "ACME_EMAIL=${ACME_EMAIL}"   >> "${ENV_FILE}"
+{
+  echo "CADDY_DOMAIN=${DOMAIN_NAME}"
+  echo "ACME_EMAIL=${ACME_EMAIL}"
+} >> "${ENV_FILE}"
 
 # Fetch OpenAI API key from SSM if present: /app/litellm/openai_api_key
 OPENAI_API_KEY="$(aws ssm get-parameter --with-decryption --name "/app/litellm/openai_api_key" --region "${AWS_REGION}" --query 'Parameter.Value' --output text 2>/dev/null || true)"
