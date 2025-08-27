@@ -1,0 +1,60 @@
+version: "3.9"
+
+name: llm-stack
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    platform: linux/arm64
+    container_name: litellm
+    command: ["litellm", "--proxy", "--host", "0.0.0.0", "--port", "4000"]
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    restart: unless-stopped
+    networks:
+      - internal
+    expose:
+      - "4000"
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    platform: linux/arm64
+    container_name: openwebui
+    volumes:
+      - openwebui-data:/app/backend/data
+    depends_on:
+      - litellm
+    restart: unless-stopped
+    networks:
+      - internal
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    platform: linux/arm64
+    container_name: caddy
+    environment:
+      - CADDY_DOMAIN=${CADDY_DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - openwebui
+    restart: unless-stopped
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  openwebui-data:
+  caddy-data:
+  caddy-config:

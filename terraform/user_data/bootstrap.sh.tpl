@@ -47,15 +47,16 @@ if [ "${USE_PRIVATE}" = "true" ]; then
   sudo -u ubuntu mkdir -p /home/ubuntu/.ssh
   chmod 700 /home/ubuntu/.ssh
 
+  # Fetch private key (ed25519) from SSM: /app/github/deploy_key_priv
   DEPLOY_KEY="$(aws ssm get-parameter --with-decryption --name "/app/github/deploy_key_priv" --region "${AWS_REGION}" --query 'Parameter.Value' --output text 2>/dev/null || true)"
   if [ -z "${DEPLOY_KEY}" ]; then
     log "ERROR: SSM parameter /app/github/deploy_key_priv not found or empty."
     exit 1
   fi
 
-  cat >/home/ubuntu/.ssh/id_ed25519 <<'KEY'
-${DEPLOY_KEY}
-KEY
+  # Write key content securely
+  sudo -u ubuntu bash -c 'umask 177 && printf "%s\n" "'"${DEPLOY_KEY}"'" > /home/ubuntu/.ssh/id_ed25519'
+
   chown ubuntu:ubuntu /home/ubuntu/.ssh/id_ed25519
   chmod 600 /home/ubuntu/.ssh/id_ed25519
 
