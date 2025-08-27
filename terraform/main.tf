@@ -88,12 +88,12 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
 resource "aws_iam_policy" "ssm_params_read" {
   name        = "llm-single-ec2-ssm-params-read"
   description = "Read /app/* parameters from SSM Parameter Store"
-  policy      = jsonencode({
+  policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
       {
         Effect   = "Allow",
-        Action   = ["ssm:GetParameter","ssm:GetParameters","ssm:GetParametersByPath"],
+        Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"],
         Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/app/*"
       },
       {

@@ -61,7 +61,7 @@ if [ "$USE_PRIVATE" = "true" ]; then
     exit 1
   fi
 
-  # Write key content securely as ubuntu user (avoid ${...} to not clash with Terraform templating)
+  # Write key content securely as ubuntu user (avoid Terraform interpolation collisions)
   sudo -u ubuntu env DEPLOY_KEY="$DEPLOY_KEY" bash -lc 'umask 177; printf "%s\n" "$DEPLOY_KEY" > /home/ubuntu/.ssh/id_ed25519'
   chown ubuntu:ubuntu /home/ubuntu/.ssh/id_ed25519
   chmod 600 /home/ubuntu/.ssh/id_ed25519
