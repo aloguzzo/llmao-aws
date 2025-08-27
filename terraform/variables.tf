@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "instance_type" {
   description = "ARM64 instance type"
   type        = string
-  default     = "t4g.large"
+  default     = "t4g.medium"
 }
 
 variable "root_volume_size_gb" {
@@ -31,11 +31,13 @@ variable "subdomain" {
 variable "acme_email" {
   description = "Email for Let's Encrypt/ACME"
   type        = string
+  default     = "info@loguzzo.it"
 }
 
 variable "github_repo_url" {
   description = "Git SSH URL (e.g., git@github.com:OWNER/REPO.git)"
   type        = string
+  default     = "git@github.com:aloguzzo/llmao-aws.git"
 }
 
 variable "use_private_repo" {

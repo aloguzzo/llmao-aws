@@ -28,6 +28,9 @@ compose/.env
 docker-compose.override.yml
 compose.override.yml
 
+# PoweShell local scripts
+recreate-with-smaller-type.ps1
+
 # Logs
 *.log
 logs/
