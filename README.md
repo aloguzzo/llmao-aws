@@ -5,7 +5,7 @@ Public, reproducible deployment of OpenWebUI (web UI) fronted by Caddy (automati
 - Region: eu-central-1
 - Domain: llmao.loguzzo.it
 - TLS/ACME email: info@loguzzo.it
-- Instance: t4g.large (AWS Graviton, ARM64)
+- Instance: t4g.medium (AWS Graviton, ARM64)
 - Access: SSM Session Manager (no SSH)
 - Persistence: Docker volumes on root EBS
 - Secrets: AWS SSM Parameter Store (SecureString)
@@ -16,7 +16,7 @@ Public, reproducible deployment of OpenWebUI (web UI) fronted by Caddy (automati
 ```mermaid
 flowchart LR
   Internet((Internet)) -->|HTTPS 443 / HTTP 80| R53["Route 53<br/>A record: llmao.loguzzo.it"]
-  R53 --> EC2["EC2 t4g.large (ARM64)<br/>Ubuntu 24.04<br/>Docker + Compose"]
+  R53 --> EC2["EC2 t4g.medium (ARM64)<br/>Ubuntu 24.04<br/>Docker + Compose"]
 
   subgraph "EC2 Host"
     Caddy["Caddy<br/>:80/:443"] -->|reverse proxy| OWUI["OpenWebUI<br/>:8080"]
@@ -52,8 +52,8 @@ flowchart LR
 
 ## Costs (approx, eu-central-1)
 
-- EC2 t4g.large: ~€50–€60/month
-- EBS gp3 40 GB: ~€3–€5/month
+- EC2 t4g.medium: ~$30 USD/month
+- EBS gp3 40 GB: ~$3–\$5/month
 - Route 53: hosted zone already exists; one additional A record
 - No ALB/NAT to keep costs low
 
