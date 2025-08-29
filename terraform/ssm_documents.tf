@@ -1,6 +1,6 @@
-﻿resource "aws_ssm_document" "app_management" {
-  name          = "llm-app-management"
-  document_type = "Command"
+resource "aws_ssm_document" "app_management" {
+  name            = "llm-app-management"
+  document_type   = "Command"
   document_format = "YAML"
 
   content = <<DOC

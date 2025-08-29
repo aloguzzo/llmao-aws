@@ -1,4 +1,4 @@
-﻿# Additional IAM policy for S3 backup access
+# Additional IAM policy for S3 backup access
 resource "aws_iam_policy" "s3_backup" {
   name        = "llm-single-ec2-s3-backup"
   description = "Allow backup operations to S3"

@@ -1,4 +1,4 @@
-﻿# S3 bucket for application backups
+# S3 bucket for application backups
 resource "aws_s3_bucket" "backups" {
   bucket = "llm-aws-backups-${random_string.bucket_suffix.result}"
 

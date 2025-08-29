@@ -3,7 +3,7 @@ output "instance_id" {
 }
 
 output "public_ip" {
-  value = aws_instance.app.public_ip
+  value = aws_eip.app.public_ip
 }
 
 output "public_dns" {
@@ -20,4 +20,8 @@ output "backup_bucket" {
 
 output "backup_bucket_arn" {
   value = aws_s3_bucket.backups.arn
+}
+
+output "eip_address" {
+  value = aws_eip.app.public_ip
 }

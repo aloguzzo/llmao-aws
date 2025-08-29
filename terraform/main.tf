@@ -151,5 +151,5 @@ resource "aws_route53_record" "llmao" {
   name    = local.fqdn
   type    = "A"
   ttl     = 300
-  records = [aws_instance.app.public_ip]
+  records = [aws_eip.app.public_ip]
 }

@@ -136,6 +136,10 @@ switch ($Command) {
         Send-AppCommand -Action "list-backups"
     }
 
+    "backup-volumes" {
+        Send-AppCommand -Action "backup-volumes"
+    }
+
     default {
         Show-Usage
         exit 1
