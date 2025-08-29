@@ -94,8 +94,8 @@ open https://llmao.loguzzo.it
 ## Management
 
 Install session manager plugin first:
-- **macOS**: (Install on macOS)[https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-macos-overview.html]
-- **Windows**: (Install on Windows)[https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-windows.html]
+- **macOS**: [Install on macOS](https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-macos-overview.html)
+- **Windows**: [Install on Windows](https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-windows.html)
 
 ### Using Management Scripts
 
