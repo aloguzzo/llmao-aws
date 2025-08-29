@@ -13,3 +13,11 @@ output "public_dns" {
 output "fqdn" {
   value = "${var.subdomain}.loguzzo.it"
 }
+
+output "backup_bucket" {
+  value = aws_s3_bucket.backups.id
+}
+
+output "backup_bucket_arn" {
+  value = aws_s3_bucket.backups.arn
+}

@@ -42,11 +42,15 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
-usermod -aG docker ubuntu || true
 
-log "Prepare app directory"
+# Add both ubuntu and ssm-user to docker group
+usermod -aG docker ubuntu || true
+usermod -aG docker ssm-user || true
+
+log "Prepare app directory with proper ownership"
 mkdir -p /opt/app
-chown ubuntu:ubuntu /opt/app
+chown -R ubuntu:ubuntu /opt/app
+chmod 755 /opt/app
 
 # If private repo, fetch deploy key from SSM and configure SSH for ubuntu user
 if [ "$USE_PRIVATE" = "true" ]; then
@@ -85,17 +89,15 @@ fi
 
 log "Clone or update repository $GITHUB_REPO_URL"
 if [ ! -d "/opt/app/.git" ]; then
-  if [ "$USE_PRIVATE" = "true" ]; then
-    sudo -u ubuntu git clone "$GITHUB_REPO_URL" /opt/app
-  else
-    git clone "$GITHUB_REPO_URL" /opt/app
-    chown -R ubuntu:ubuntu /opt/app
-  fi
+  sudo -u ubuntu git clone "$GITHUB_REPO_URL" /opt/app
 else
   cd /opt/app
   # Ensure both pull and fallback fetch run as ubuntu
   sudo -u ubuntu bash -lc 'git pull --ff-only || git fetch --all --prune'
 fi
+
+# Configure git safe directory for ubuntu user
+sudo -u ubuntu git config --global --add safe.directory /opt/app
 
 # Compose expects /opt/app/compose/compose.yml and /opt/app/caddy/Caddyfile
 if [ ! -f "/opt/app/compose/compose.yml" ]; then
@@ -118,9 +120,9 @@ if [ -n "$OPENAI_API_KEY" ]; then
 fi
 chown ubuntu:ubuntu "$ENV_FILE"
 
-log "Docker Compose pull and up"
+log "Docker Compose pull and up (as ubuntu user)"
 cd /opt/app/compose
-docker compose --env-file .env pull
-docker compose --env-file .env up -d
+sudo -u ubuntu docker compose --env-file .env pull
+sudo -u ubuntu docker compose --env-file .env up -d
 
 log "Bootstrap complete"

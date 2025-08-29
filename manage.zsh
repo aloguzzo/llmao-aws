@@ -1,13 +1,30 @@
-﻿#!/usr/bin/env bash
+﻿#!/usr/bin/env zsh
 set -euo pipefail
 
 REGION="eu-central-1"
-INSTANCE_ID="$(terraform -chdir=terraform output -raw instance_id 2>/dev/null || echo '')"
+INSTANCE_ID=""
 
-if [ -z "$INSTANCE_ID" ]; then
-    echo "Error: Could not get instance ID. Run terraform apply first."
-    exit 1
-fi
+# Check for session-manager-plugin
+check_session_manager() {
+    if ! command -v session-manager-plugin &> /dev/null; then
+        echo "Error: session-manager-plugin is not installed or not in PATH"
+        echo ""
+        echo "To install on macOS:"
+        echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/install-plugin-macos-overview.html"
+        return 1
+    fi
+}
+
+# Get instance ID
+get_instance_id() {
+    if [[ -z "$INSTANCE_ID" ]]; then
+        INSTANCE_ID="$(terraform -chdir=terraform output -raw instance_id 2>/dev/null || echo '')"
+        if [[ -z "$INSTANCE_ID" ]]; then
+            echo "Error: Could not get instance ID. Run terraform apply first."
+            exit 1
+        fi
+    fi
+}
 
 usage() {
     cat <<EOF
@@ -22,6 +39,7 @@ Application Management:
   restart-litellm     - Restart only LiteLLM
   backup              - Backup Docker volumes
   redeploy            - Pull git changes and redeploy
+  list-backups        - List available backups on S3
   logs-caddy [lines]  - Show Caddy logs (default: 50 lines)
   logs-openwebui [lines] - Show OpenWebUI logs
   logs-litellm [lines]   - Show LiteLLM logs
@@ -55,12 +73,19 @@ send_app_command() {
         --output table
 }
 
+# Check prerequisites
+check_session_manager || exit 1
+get_instance_id
+
 case "${1:-}" in
     status|update|restart|backup|redeploy)
         send_app_command "${1/update/update-images}"
         ;;
     restart-caddy|restart-openwebui|restart-litellm)
         send_app_command "$1"
+        ;;
+    list-backups)
+        send_app_command "list-backups"
         ;;
     logs-caddy|logs-openwebui|logs-litellm)
         send_app_command "$1" "${2:-50}"

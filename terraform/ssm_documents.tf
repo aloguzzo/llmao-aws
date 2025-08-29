@@ -18,6 +18,7 @@ parameters:
       - restart-openwebui
       - restart-litellm
       - backup-volumes
+      - list-backups
       - redeploy
       - logs-caddy
       - logs-openwebui
@@ -30,7 +31,7 @@ mainSteps:
   - action: aws:runShellScript
     name: executeAction
     inputs:
-      timeoutSeconds: '300'
+      timeoutSeconds: '600'
       runCommand:
         - |
           #!/bin/bash
@@ -40,6 +41,7 @@ mainSteps:
           LINES="{{ lines }}"
 
           cd /opt/app
+          export BACKUP_BUCKET="${aws_s3_bucket.backups.id}"
 
           case "$ACTION" in
             status)
@@ -62,6 +64,9 @@ mainSteps:
               ;;
             backup-volumes)
               bash scripts/backup-volumes.sh
+              ;;
+            list-backups)
+              bash scripts/restore-volumes.sh
               ;;
             redeploy)
               bash scripts/redeploy.sh

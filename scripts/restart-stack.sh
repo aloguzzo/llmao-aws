@@ -3,18 +3,27 @@ set -euo pipefail
 
 log() { echo "[$(date -Is)] $*"; }
 
+# Function to run commands as ubuntu user
+run_as_ubuntu() {
+    if [ "$(whoami)" = "ubuntu" ]; then
+        "$@"
+    else
+        sudo -u ubuntu "$@"
+    fi
+}
+
 cd /opt/app/compose
 
 log "Stopping all services..."
-docker compose down
+run_as_ubuntu docker compose down
 
 log "Starting all services..."
-docker compose up -d
+run_as_ubuntu docker compose up -d
 
 log "Container status:"
-docker compose ps
+run_as_ubuntu docker compose ps
 
 log "Recent logs from each service:"
-docker compose logs --tail=20 caddy
-docker compose logs --tail=20 openwebui
-docker compose logs --tail=20 litellm
+run_as_ubuntu docker compose logs --tail=20 caddy
+run_as_ubuntu docker compose logs --tail=20 openwebui
+run_as_ubuntu docker compose logs --tail=20 litellm

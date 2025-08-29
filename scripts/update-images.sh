@@ -3,16 +3,25 @@ set -euo pipefail
 
 log() { echo "[$(date -Is)] $*"; }
 
+# Function to run commands as ubuntu user
+run_as_ubuntu() {
+    if [ "$(whoami)" = "ubuntu" ]; then
+        "$@"
+    else
+        sudo -u ubuntu "$@"
+    fi
+}
+
 cd /opt/app/compose
 
 log "Pulling latest Docker images..."
-docker compose pull
+run_as_ubuntu docker compose pull
 
 log "Recreating containers with new images..."
-docker compose up -d
+run_as_ubuntu docker compose up -d
 
 log "Cleaning up old images..."
-docker image prune -f
+run_as_ubuntu docker image prune -f
 
 log "Current container status:"
-docker compose ps
+run_as_ubuntu docker compose ps

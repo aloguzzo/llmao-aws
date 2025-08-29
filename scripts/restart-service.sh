@@ -10,13 +10,22 @@ fi
 
 log() { echo "[$(date -Is)] $*"; }
 
+# Function to run commands as ubuntu user
+run_as_ubuntu() {
+    if [ "$(whoami)" = "ubuntu" ]; then
+        "$@"
+    else
+        sudo -u ubuntu "$@"
+    fi
+}
+
 cd /opt/app/compose
 
 log "Restarting service: $SERVICE_NAME"
-docker compose restart "$SERVICE_NAME"
+run_as_ubuntu docker compose restart "$SERVICE_NAME"
 
 log "Service status:"
-docker compose ps "$SERVICE_NAME"
+run_as_ubuntu docker compose ps "$SERVICE_NAME"
 
 log "Recent logs:"
-docker compose logs --tail=30 "$SERVICE_NAME"
+run_as_ubuntu docker compose logs --tail=30 "$SERVICE_NAME"
