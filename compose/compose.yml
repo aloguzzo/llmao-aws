@@ -12,7 +12,7 @@ services:
     command: ["--port", "4000", "--config", "/app/config.yaml"]
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
-    restart: unless-stopped
+    restart: always
     networks:
       - internal
     expose:
@@ -29,7 +29,7 @@ services:
       - openwebui-data:/app/backend/data
     depends_on:
       - litellm
-    restart: unless-stopped
+    restart: always
     networks:
       - internal
     expose:
@@ -51,7 +51,7 @@ services:
       - "443:443"
     depends_on:
       - openwebui
-    restart: unless-stopped
+    restart: always
     networks:
       - internal
 
