@@ -43,6 +43,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "backups" {
     id     = "backup_lifecycle"
     status = "Enabled"
 
+    # Apply to all objects in the bucket
+    filter {}
+
     # Delete old versions after 30 days
     noncurrent_version_expiration {
       noncurrent_days = 30
