@@ -21,7 +21,21 @@ Single-instance deployment of OpenWebUI with LiteLLM proxy, fronted by Caddy wit
 - AWS account with appropriate permissions
 - Route 53 hosted zone for `loguzzo.it`
 - Terraform 1.13+ and AWS CLI v2
-- GitHub repo access: `git@github.com:aloguzzo/llmao-aws.git`
+
+## Repository Access
+
+This project supports both public and private GitHub repositories:
+
+### Public Repository (Default)
+- Uses HTTPS clone: `https://github.com/aloguzzo/llmao-aws.git`
+- No additional setup required
+- Set `use_private_repo = false` (default)
+
+### Private Repository
+- Uses SSH clone: `git@github.com:aloguzzo/llmao-aws.git`
+- Requires deploy key setup in SSM Parameter Store
+- Set `use_private_repo = true`
+- Store deploy key in: `/app/github/deploy_key_priv`
 
 ## Quick Start
 
@@ -52,19 +66,20 @@ aws dynamodb create-table \
 Store required secrets in AWS SSM Parameter Store:
 
 ```bash
-# GitHub deploy key (private key for repo access)
-aws ssm put-parameter \
-  --name "/app/github/deploy_key_priv" \
-  --type "SecureString" \
-  --value "$(cat ./your-deploy-key)" \
-  --overwrite \
-  --region eu-central-1
-
-# OpenAI API key
+# OpenAI API key (required)
 aws ssm put-parameter \
   --name "/app/litellm/openai_api_key" \
   --type "SecureString" \
   --value "sk-YOUR_OPENAI_KEY" \
+  --overwrite \
+  --region eu-central-1
+
+# GitHub deploy key (only needed for private repositories)
+# Skip this if using public repository
+aws ssm put-parameter \
+  --name "/app/github/deploy_key_priv" \
+  --type "SecureString" \
+  --value "$(cat ./your-deploy-key)" \
   --overwrite \
   --region eu-central-1
 ```
@@ -74,10 +89,19 @@ aws ssm put-parameter \
 ```bash
 cd terraform
 terraform init
+
+# For public repo (default):
+terraform apply \
+  -var 'github_repo_url=https://github.com/aloguzzo/llmao-aws.git' \
+  -var 'acme_email=info@loguzzo.it' \
+  -var 'subdomain=llmao'
+
+# For private repo (explicit override):
 terraform apply \
   -var 'github_repo_url=git@github.com:aloguzzo/llmao-aws.git' \
   -var 'acme_email=info@loguzzo.it' \
-  -var 'subdomain=llmao'
+  -var 'subdomain=llmao' \
+  -var 'use_private_repo=true'
 ```
 
 ### 4. Verify

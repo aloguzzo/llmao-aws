@@ -43,7 +43,7 @@ variable "github_repo_url" {
 variable "use_private_repo" {
   description = "If true, bootstrap fetches SSH deploy key from SSM"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "ssh_key_name" {
