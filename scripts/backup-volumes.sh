@@ -36,6 +36,7 @@ backup_openwebui() {
     local s3_key="backups/${backup_name}_${TIMESTAMP}.tar.gz"
     local temp_dir
     temp_dir="/tmp/docker_backup_$$_$(date +%s)"
+    local archive_file="${temp_dir}.tar.gz"
 
     log "Backing up volume: $volume_name"
 
@@ -70,7 +71,7 @@ backup_openwebui() {
         sudo -u ubuntu mkdir -p "$temp_dir"
     fi
 
-    # Copy data from volume to temp directory and compress
+    # Copy data from volume to temp directory
     log "  Copying data from volume..."
     if run_as_ubuntu docker cp "$container_id:/source/." "$temp_dir/"; then
         # Check what we actually copied
@@ -86,17 +87,32 @@ backup_openwebui() {
             done
         fi
 
-        # Create compressed archive and upload to S3
-        log "  Creating compressed archive and uploading to S3..."
-        if tar -C "$temp_dir" -czf - . | aws s3 cp - "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION"; then
-            log "✓ Successfully backed up $volume_name to s3://${BACKUP_BUCKET}/${s3_key}"
+        # Create compressed archive to local file first
+        log "  Creating compressed archive..."
+        if tar -C "$temp_dir" -czf "$archive_file" .; then
+            local archive_size
+            archive_size=$(stat -c%s "$archive_file" 2>/dev/null || stat -f%z "$archive_file" 2>/dev/null || echo "unknown")
+            log "  Archive created: $(numfmt --to=iec --suffix=B "$archive_size" 2>/dev/null || echo "$archive_size bytes")"
 
-            # Get backup size
-            local size
-            size=$(aws s3 ls "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION" | awk '{print $3}')
-            log "  Backup size: $(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes")"
+            # Upload to S3
+            log "  Uploading to S3..."
+            if aws s3 cp "$archive_file" "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION"; then
+                log "✓ Successfully backed up $volume_name to s3://${BACKUP_BUCKET}/${s3_key}"
+
+                # Get backup size from S3
+                local s3_size
+                s3_size=$(aws s3 ls "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION" | awk '{print $3}')
+                log "  S3 backup size: $(numfmt --to=iec --suffix=B "$s3_size" 2>/dev/null || echo "$s3_size bytes")"
+            else
+                log "✗ Failed to upload backup to S3"
+                # Cleanup on error
+                run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
+                rm -rf "$temp_dir" || true
+                rm -f "$archive_file" || true
+                return 1
+            fi
         else
-            log "✗ Failed to upload backup for $volume_name"
+            log "✗ Failed to create archive"
             # Cleanup on error
             run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
             rm -rf "$temp_dir" || true
@@ -113,6 +129,7 @@ backup_openwebui() {
     # Cleanup on success
     run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
     rm -rf "$temp_dir" || true
+    rm -f "$archive_file" || true
 
     log "✓ OpenWebUI backup completed successfully"
 }
