@@ -35,9 +35,9 @@ variable "acme_email" {
 }
 
 variable "github_repo_url" {
-  description = "Git SSH URL (e.g., git@github.com:OWNER/REPO.git)"
+  description = "Git HTTPS URL or SSH if use_private_repo is true"
   type        = string
-  default     = "git@github.com:aloguzzo/llmao-aws.git"
+  default     = "https://github.com/aloguzzo/llmao-aws.git"
 }
 
 variable "use_private_repo" {
