@@ -16,11 +16,11 @@ log "Starting redeploy process..."
 
 cd /opt/app
 
-log "Updating git repository..."
-run_as_ubuntu git pull --ff-only || {
-    log "Fast-forward failed, fetching all branches..."
-    run_as_ubuntu git fetch --all --prune
-}
+log "Fetching latest changes from git repository..."
+run_as_ubuntu git fetch --all --prune
+
+log "Pulling latest changes..."
+run_as_ubuntu git pull
 
 cd compose
 
