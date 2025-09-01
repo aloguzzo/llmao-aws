@@ -34,9 +34,29 @@ backup_volume() {
     local volume_name="$1"
     local backup_name="$2"
     local s3_key="backups/${backup_name}_${TIMESTAMP}.tar.gz"
-    local temp_dir="/tmp/docker_backup_$$"
+    local temp_dir
+    temp_dir="/tmp/docker_backup_$$_$(date +%s)"
 
     log "Backing up volume: $volume_name"
+
+    # First, check if volume exists and has content
+    log "Inspecting volume $volume_name..."
+    if ! run_as_ubuntu docker volume inspect "$volume_name" >/dev/null 2>&1; then
+        log "✗ Volume $volume_name does not exist"
+        return 1
+    fi
+
+    # Check volume contents
+    local file_count
+    file_count=$(run_as_ubuntu docker run --rm -v "${volume_name}:/source:ro" ubuntu:24.04 find /source -type f 2>/dev/null | wc -l)
+    local dir_size
+    dir_size=$(run_as_ubuntu docker run --rm -v "${volume_name}:/source:ro" ubuntu:24.04 du -sh /source 2>/dev/null | cut -f1)
+
+    log "  Volume contains $file_count files, total size: $dir_size"
+
+    if [[ "$file_count" -eq 0 ]]; then
+        log "  ⚠ Warning: Volume appears to be empty"
+    fi
 
     # Create temporary container to access volume data
     local container_id
@@ -49,8 +69,23 @@ backup_volume() {
     mkdir -p "$temp_dir"
 
     # Copy data from volume to temp directory and compress
+    log "  Copying data from volume..."
     if run_as_ubuntu docker cp "$container_id:/source/." "$temp_dir/"; then
+        # Check what we actually copied
+        local copied_files
+        copied_files=$(find "$temp_dir" -type f 2>/dev/null | wc -l)
+        log "  Copied $copied_files files to temporary directory"
+
+        # List some files for debugging (limit to first 10)
+        if [[ "$copied_files" -gt 0 ]]; then
+            log "  Sample files:"
+            find "$temp_dir" -type f | head -10 | while read -r file; do
+                log "    $(basename "$file")"
+            done
+        fi
+
         # Create compressed archive and upload to S3
+        log "  Creating compressed archive and uploading to S3..."
         if tar -C "$temp_dir" -czf - . | aws s3 cp - "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION"; then
             log "✓ Successfully backed up $volume_name to s3://${BACKUP_BUCKET}/${s3_key}"
 
@@ -81,10 +116,17 @@ for cmd in docker aws tar numfmt; do
     fi
 done
 
-# Backup all volumes
-backup_volume "compose_openwebui-data" "openwebui-data"
-backup_volume "compose_caddy-data" "caddy-data"
-backup_volume "compose_caddy-config" "caddy-config"
+# List all Docker volumes for debugging
+log "Available Docker volumes:"
+run_as_ubuntu docker volume ls
+
+log "Docker Compose project status:"
+run_as_ubuntu docker compose ps
+
+# Backup all volumes with CORRECT names
+backup_volume "llm-stack_openwebui-data" "openwebui-data"
+backup_volume "llm-stack_caddy-data" "caddy-data"
+backup_volume "llm-stack_caddy-config" "caddy-config"
 
 log "Listing recent backups in S3:"
 aws s3 ls "s3://${BACKUP_BUCKET}/backups/" --region "$AWS_REGION" --human-readable --summarize | tail -20
