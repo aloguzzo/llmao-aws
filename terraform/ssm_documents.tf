@@ -71,7 +71,15 @@ mainSteps:
         - |
           #!/bin/bash
           set -euo pipefail
+
+          # Re-detect region in this step too (mainSteps don't share env)
+          if [[ -z "$${AWS_REGION:-}" ]]; then
+            TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)
+            AWS_REGION=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/dynamic/instance-identity/document 2>/dev/null | grep region | cut -d'"' -f4 || true)
+            export AWS_REGION
+          fi
           : "$${AWS_REGION:?AWS_REGION not set}"
+
           CONFIG_PATH="/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json"
           mkdir -p "$(dirname "$CONFIG_PATH")"
 
@@ -94,7 +102,7 @@ mainSteps:
           /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a status || true
           journalctl -u amazon-cloudwatch-agent -n 30 --no-pager || true
 
-  # Existing app controls
+  # Existing app controls (always runs; include a no-op for setup-cloudwatch)
   - action: aws:runShellScript
     name: executeAction
     inputs:
@@ -106,6 +114,12 @@ mainSteps:
 
           ACTION="{{ action }}"
           LINES="{{ lines }}"
+
+          # Short-circuit for setup-cloudwatch so this step doesn't fail
+          if [[ "$ACTION" == "setup-cloudwatch" ]]; then
+            echo "CloudWatch Agent setup executed in prior steps."
+            exit 0
+          fi
 
           cd /opt/app
           export BACKUP_BUCKET="${aws_s3_bucket.backups.id}"
