@@ -29,14 +29,13 @@ cd /opt/app/compose
 
 log "Starting backup to S3 bucket: $BACKUP_BUCKET"
 
-# Function to create and upload backup efficiently
-backup_volume() {
-    local volume_name="$1"
-    local backup_name="$2"
+# Function to backup OpenWebUI volume only
+backup_openwebui() {
+    local volume_name="llm-stack_openwebui-data"
+    local backup_name="openwebui-data"
     local s3_key="backups/${backup_name}_${TIMESTAMP}.tar.gz"
     local temp_dir
     temp_dir="/tmp/docker_backup_$$_$(date +%s)"
-    local container_id=""
 
     log "Backing up volume: $volume_name"
 
@@ -57,25 +56,14 @@ backup_volume() {
 
     if [[ "$file_count" -eq 0 ]]; then
         log "  ⚠ Warning: Volume appears to be empty"
+        return 0
     fi
 
-    # Create temporary container to access volume data (run as root to avoid permission issues)
+    # Create temporary container to access volume data
+    local container_id
     container_id=$(run_as_ubuntu docker create -v "${volume_name}:/source:ro" ubuntu:24.04)
 
-    # Cleanup function
-    cleanup() {
-        if [[ -n "$container_id" ]]; then
-            run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
-        fi
-        if [[ -n "$temp_dir" && -d "$temp_dir" ]]; then
-            rm -rf "$temp_dir" || true
-        fi
-    }
-
-    # Set trap for cleanup
-    trap cleanup EXIT
-
-    # Create temp directory for backup (ensure ubuntu user owns it)
+    # Create temp directory for backup
     if [[ "$(whoami)" = "ubuntu" ]]; then
         mkdir -p "$temp_dir"
     else
@@ -90,10 +78,10 @@ backup_volume() {
         copied_files=$(find "$temp_dir" -type f 2>/dev/null | wc -l)
         log "  Copied $copied_files files to temporary directory"
 
-        # List some files for debugging (limit to first 10)
+        # List some files for debugging (limit to first 5)
         if [[ "$copied_files" -gt 0 ]]; then
             log "  Sample files:"
-            find "$temp_dir" -type f | head -10 | while read -r file; do
+            find "$temp_dir" -type f | head -5 | while read -r file; do
                 log "    $(basename "$file")"
             done
         fi
@@ -109,18 +97,24 @@ backup_volume() {
             log "  Backup size: $(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes")"
         else
             log "✗ Failed to upload backup for $volume_name"
-            cleanup
+            # Cleanup on error
+            run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
+            rm -rf "$temp_dir" || true
             return 1
         fi
     else
         log "✗ Failed to copy data from volume $volume_name"
-        cleanup
+        # Cleanup on error
+        run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
+        rm -rf "$temp_dir" || true
         return 1
     fi
 
-    # Manual cleanup
-    cleanup
-    trap - EXIT
+    # Cleanup on success
+    run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
+    rm -rf "$temp_dir" || true
+
+    log "✓ OpenWebUI backup completed successfully"
 }
 
 # Check required tools are available
@@ -138,26 +132,10 @@ run_as_ubuntu docker volume ls
 log "Docker Compose project status:"
 run_as_ubuntu docker compose ps
 
-# Backup all volumes with CORRECT names
-backup_volume "llm-stack_openwebui-data" "openwebui-data"
-backup_volume "llm-stack_caddy-data" "caddy-data"
-backup_volume "llm-stack_caddy-config" "caddy-config"
+# Backup only OpenWebUI volume
+backup_openwebui
 
 log "Listing recent backups in S3:"
-aws s3 ls "s3://${BACKUP_BUCKET}/backups/" --region "$AWS_REGION" --human-readable --summarize | tail -20
+aws s3 ls "s3://${BACKUP_BUCKET}/backups/" --region "$AWS_REGION" --human-readable --summarize | tail -10
 
-log "Backup completed successfully"
-
-# Clean up old backups (keep last 30 days)
-log "Cleaning up backups older than 30 days..."
-cutoff_date=$(date -d '30 days ago' '+%Y-%m-%d' 2>/dev/null || date -v-30d '+%Y-%m-%d' 2>/dev/null || echo '')
-if [[ -n "$cutoff_date" ]]; then
-    aws s3 ls "s3://${BACKUP_BUCKET}/backups/" --region "$AWS_REGION" | \
-    awk -v cutoff="$cutoff_date" '$1" "$2 < cutoff" 00:00:00" {print $4}' | \
-    while read -r file; do
-        if [[ -n "$file" ]]; then
-            log "Deleting old backup: $file"
-            aws s3 rm "s3://${BACKUP_BUCKET}/backups/$file" --region "$AWS_REGION" || true
-        fi
-    done
-fi
+log "Backup process completed"
