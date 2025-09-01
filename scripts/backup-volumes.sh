@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
@@ -36,6 +36,7 @@ backup_volume() {
     local s3_key="backups/${backup_name}_${TIMESTAMP}.tar.gz"
     local temp_dir
     temp_dir="/tmp/docker_backup_$$_$(date +%s)"
+    local container_id=""
 
     log "Backing up volume: $volume_name"
 
@@ -58,15 +59,28 @@ backup_volume() {
         log "  ⚠ Warning: Volume appears to be empty"
     fi
 
-    # Create temporary container to access volume data
-    local container_id
+    # Create temporary container to access volume data (run as root to avoid permission issues)
     container_id=$(run_as_ubuntu docker create -v "${volume_name}:/source:ro" ubuntu:24.04)
 
-    # Ensure cleanup on exit - use single quotes to prevent early expansion
-    trap 'run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true; rm -rf "$temp_dir"' EXIT
+    # Cleanup function
+    cleanup() {
+        if [[ -n "$container_id" ]]; then
+            run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
+        fi
+        if [[ -n "$temp_dir" && -d "$temp_dir" ]]; then
+            rm -rf "$temp_dir" || true
+        fi
+    }
 
-    # Create temp directory for backup
-    mkdir -p "$temp_dir"
+    # Set trap for cleanup
+    trap cleanup EXIT
+
+    # Create temp directory for backup (ensure ubuntu user owns it)
+    if [[ "$(whoami)" = "ubuntu" ]]; then
+        mkdir -p "$temp_dir"
+    else
+        sudo -u ubuntu mkdir -p "$temp_dir"
+    fi
 
     # Copy data from volume to temp directory and compress
     log "  Copying data from volume..."
@@ -95,16 +109,17 @@ backup_volume() {
             log "  Backup size: $(numfmt --to=iec --suffix=B "$size" 2>/dev/null || echo "$size bytes")"
         else
             log "✗ Failed to upload backup for $volume_name"
+            cleanup
             return 1
         fi
     else
         log "✗ Failed to copy data from volume $volume_name"
+        cleanup
         return 1
     fi
 
-    # Cleanup
-    run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
-    rm -rf "$temp_dir"
+    # Manual cleanup
+    cleanup
     trap - EXIT
 }
 
