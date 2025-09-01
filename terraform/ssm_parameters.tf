@@ -20,18 +20,18 @@ resource "aws_ssm_parameter" "cw_agent_config" {
       aggregation_dimensions = [["InstanceId"]]
       metrics_collected = {
         cpu = {
-          measurement = ["cpu_usage_idle","cpu_usage_user","cpu_usage_system","cpu_usage_iowait"]
+          measurement = ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system", "cpu_usage_iowait"]
           resources   = ["*"]
           totalcpu    = true
         }
-        mem = { measurement = ["mem_used_percent","mem_available","mem_free"] }
+        mem = { measurement = ["mem_used_percent", "mem_available", "mem_free"] }
         disk = {
-          measurement = ["used_percent","inodes_free"]
-          resources   = ["*"]
-          ignore_file_system_types = ["sysfs","devtmpfs","overlay","squashfs","tracefs","tmpfs"]
+          measurement              = ["used_percent", "inodes_free"]
+          resources                = ["*"]
+          ignore_file_system_types = ["sysfs", "devtmpfs", "overlay", "squashfs", "tracefs", "tmpfs"]
         }
         net = {
-          measurement = ["bytes_sent","bytes_recv","packets_sent","packets_recv"]
+          measurement = ["bytes_sent", "bytes_recv", "packets_sent", "packets_recv"]
           resources   = ["*"]
         }
       }
@@ -41,10 +41,10 @@ resource "aws_ssm_parameter" "cw_agent_config" {
         files = {
           collect_list = [
             {
-              file_path          = "/var/lib/docker/containers/*/*-json.log"
-              log_group_name     = "/ec2/llm-stack/docker"
-              log_stream_name    = "{instance_id}-{container_id}"
-              timestamp_format   = "%Y-%m-%dT%H:%M:%S.%fZ"
+              file_path                = "/var/lib/docker/containers/*/*-json.log"
+              log_group_name           = "/ec2/llm-stack/docker"
+              log_stream_name          = "{instance_id}-{container_id}"
+              timestamp_format         = "%Y-%m-%dT%H:%M:%S.%fZ"
               multi_line_start_pattern = "^{"
             },
             {
