@@ -1,11 +1,11 @@
-﻿#!/usr/bin/env zsh
+#!/usr/bin/env zsh
 set -euo pipefail
 
 REGION="eu-central-1"
 INSTANCE_ID=""
 
-# Check for session-manager-plugin
-check_session_manager() {
+# Check for session-manager-plugin (only required for 'shell')
+check_session_manager_for_shell() {
     if ! command -v session-manager-plugin &> /dev/null; then
         echo "Error: session-manager-plugin is not installed or not in PATH"
         echo ""
@@ -66,20 +66,26 @@ send_app_command() {
 
     echo "Executing: $action"
     aws ssm send-command \
-        --document-name "llm-app-management" \
-        --targets "Key=instanceids,Values=$INSTANCE_ID" \
-        --parameters "action=$action,lines=$lines" \
-        --region "$REGION" \
-        --output table
+      --document-name "llm-app-management" \
+      --instance-ids "$INSTANCE_ID" \
+      --parameters "action=$action,lines=$lines" \
+      --region "$REGION" \
+      --output table
 }
 
-# Check prerequisites
-check_session_manager || exit 1
+# No global plugin check; only for 'shell'
 get_instance_id
 
 case "${1:-}" in
     status|update|restart|backup|redeploy)
-        send_app_command "${1/update/update-images}"
+        # Map friendly commands to SSM allowed values
+        case "$1" in
+          update)   action="update-images" ;;
+          restart)  action="restart-stack" ;;
+          backup)   action="backup-volumes" ;;
+          *)        action="$1" ;;
+        esac
+        send_app_command "$action"
         ;;
     restart-caddy|restart-openwebui|restart-litellm)
         send_app_command "$1"
@@ -103,6 +109,7 @@ case "${1:-}" in
             --query 'Reservations[0].Instances[0].State.Name' --output text
         ;;
     shell)
+        check_session_manager_for_shell || exit 1
         aws ssm start-session --target "$INSTANCE_ID" --region "$REGION"
         ;;
     *)

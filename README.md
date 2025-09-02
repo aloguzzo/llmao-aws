@@ -152,6 +152,21 @@ Install session manager plugin first:
 | `stop/start`           | Control EC2 instance                                   |
 | `shell`                | Interactive SSM session                                |
 
+### Restore Operations
+
+```bash
+# List available backups
+./manage.zsh list-backups
+
+# Restore from specific backup (interactive)
+cd /opt/app && sudo -u ubuntu bash scripts/restore-volumes.sh 20241201_143022
+
+# Or browse available backups first
+cd /opt/app && sudo -u ubuntu bash scripts/restore-volumes.sh
+```
+
+**Note**: Restore operations require direct server access via SSM shell session as they need interactive confirmation for safety.
+
 ### Direct AWS CLI
 
 ```bash
