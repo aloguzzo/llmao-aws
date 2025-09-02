@@ -1,158 +1,353 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-BACKUP_BUCKET="${BACKUP_BUCKET:-}"
-AWS_REGION="${AWS_REGION:-eu-central-1}"
+# Backup Docker volumes to S3 with service quiescing and robust error handling.
+#
+# Defaults:
+# - Backs up: openwebui-data, caddy-data, caddy-config
+# - Quiesces services with docker compose pause/unpause
+# - Determines bucket via BACKUP_BUCKET or Terraform output
+#
+# Environment variables:
+#   BACKUP_BUCKET       S3 bucket to upload to (required unless Terraform output available)
+#   AWS_REGION          AWS region (default: eu-central-1)
+#   TARGETS             Space/comma-separated: openwebui-data caddy-data caddy-config (default: all)
+#   QUIESCE_MODE        pause | stop | none (default: pause)
+#   COMPOSE_DIR         Path to docker compose project (default: /opt/app/compose)
+#   HELPER_IMAGE        Helper container image to run tar/find (default: ubuntu:24.04)
+#   S3_PREFIX           S3 prefix for objects (default: backups)
+#   FORCE_SSE_AES256    If "true", add --sse AES256 on upload
+#   S3_KMS_KEY_ID       If set, use KMS: --sse aws:kms --sse-kms-key-id
+#
+# Exit codes:
+#   0 on success (even if some volumes are empty)
+#   non-zero if a backup operation fails unexpectedly
 
-log() { echo "[$(date -Is)] $*"; }
+AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-eu-central-1}}"
+COMPOSE_DIR="${COMPOSE_DIR:-/opt/app/compose}"
+HELPER_IMAGE="${HELPER_IMAGE:-ubuntu:24.04}"
+S3_PREFIX="${S3_PREFIX:-backups}"
+QUIESCE_MODE="${QUIESCE_MODE:-pause}"
+TIMESTAMP="$(date +"%Y%m%d_%H%M%S")"
 
-# Function to run commands as ubuntu user
-run_as_ubuntu() {
-    if [ "$(whoami)" = "ubuntu" ]; then
-        "$@"
-    else
-        sudo -u ubuntu "$@"
-    fi
-}
+# Default targets (short names as they appear in compose volumes:)
+DEFAULT_TARGETS=(openwebui-data caddy-data caddy-config)
 
-# Get backup bucket from terraform output if not set
-if [[ -z "$BACKUP_BUCKET" ]]; then
-    BACKUP_BUCKET="$(terraform -chdir=/opt/app/terraform output -raw backup_bucket 2>/dev/null || echo '')"
-    if [[ -z "$BACKUP_BUCKET" ]]; then
-        log "ERROR: Could not determine backup bucket. Set BACKUP_BUCKET environment variable."
-        exit 1
-    fi
+# Parse TARGETS env (space or comma separated)
+if [[ -n "${TARGETS:-}" ]]; then
+  # Replace commas with spaces, then read into array
+  TARGETS_PARSED=()
+  IFS=' ,'; read -r -a TARGETS_PARSED <<< "${TARGETS}"
+  TARGETS=("${TARGETS_PARSED[@]}")
+else
+  TARGETS=("${DEFAULT_TARGETS[@]}")
 fi
 
-cd /opt/app/compose
+log()   { echo "[$(date -Is)] $*"; }
+warn()  { echo "[$(date -Is)] WARNING: $*" >&2; }
+die()   { echo "[$(date -Is)] ERROR: $*" >&2; exit 1; }
 
-log "Starting backup to S3 bucket: $BACKUP_BUCKET"
-
-# Function to backup OpenWebUI volume only
-backup_openwebui() {
-    local volume_name="llm-stack_openwebui-data"
-    local backup_name="openwebui-data"
-    local s3_key="backups/${backup_name}_${TIMESTAMP}.tar.gz"
-    local temp_dir
-    temp_dir="/tmp/docker_backup_$$_$(date +%s)"
-    local archive_file="${temp_dir}.tar.gz"
-
-    log "Backing up volume: $volume_name"
-
-    # First, check if volume exists and has content
-    log "Inspecting volume $volume_name..."
-    if ! run_as_ubuntu docker volume inspect "$volume_name" >/dev/null 2>&1; then
-        log "✗ Volume $volume_name does not exist"
-        return 1
-    fi
-
-    # Check volume contents
-    local file_count
-    file_count=$(run_as_ubuntu docker run --rm -v "${volume_name}:/source:ro" ubuntu:24.04 find /source -type f 2>/dev/null | wc -l)
-    local dir_size
-    dir_size=$(run_as_ubuntu docker run --rm -v "${volume_name}:/source:ro" ubuntu:24.04 du -sh /source 2>/dev/null | cut -f1)
-
-    log "  Volume contains $file_count files, total size: $dir_size"
-
-    if [[ "$file_count" -eq 0 ]]; then
-        log "  ⚠ Warning: Volume appears to be empty"
-        return 0
-    fi
-
-    # Create temporary container to access volume data
-    local container_id
-    container_id=$(run_as_ubuntu docker create -v "${volume_name}:/source:ro" ubuntu:24.04)
-
-    # Create temp directory for backup
-    if [[ "$(whoami)" = "ubuntu" ]]; then
-        mkdir -p "$temp_dir"
+# Run commands as ubuntu user when present, fall back to current user otherwise
+run_as_ubuntu() {
+  if id -u ubuntu >/dev/null 2>&1; then
+    if [[ "$(id -un)" == "ubuntu" ]]; then
+      "$@"
     else
-        sudo -u ubuntu mkdir -p "$temp_dir"
+      if command -v sudo >/dev/null 2>&1; then
+        sudo -n -u ubuntu "$@"
+      else
+        warn "sudo not available; running command as current user: $*"
+        "$@"
+      fi
     fi
-
-    # Copy data from volume to temp directory
-    log "  Copying data from volume..."
-    if run_as_ubuntu docker cp "$container_id:/source/." "$temp_dir/"; then
-        # Check what we actually copied
-        local copied_files
-        copied_files=$(find "$temp_dir" -type f 2>/dev/null | wc -l)
-        log "  Copied $copied_files files to temporary directory"
-
-        # List some files for debugging (limit to first 5)
-        if [[ "$copied_files" -gt 0 ]]; then
-            log "  Sample files:"
-            find "$temp_dir" -type f | head -5 | while read -r file; do
-                log "    $(basename "$file")"
-            done
-        fi
-
-        # Create compressed archive to local file first
-        log "  Creating compressed archive..."
-        if tar -C "$temp_dir" -czf "$archive_file" .; then
-            local archive_size
-            archive_size=$(stat -c%s "$archive_file" 2>/dev/null || stat -f%z "$archive_file" 2>/dev/null || echo "unknown")
-            log "  Archive created: $(numfmt --to=iec --suffix=B "$archive_size" 2>/dev/null || echo "$archive_size bytes")"
-
-            # Upload to S3
-            log "  Uploading to S3..."
-            if aws s3 cp "$archive_file" "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION"; then
-                log "✓ Successfully backed up $volume_name to s3://${BACKUP_BUCKET}/${s3_key}"
-
-                # Get backup size from S3
-                local s3_size
-                s3_size=$(aws s3 ls "s3://${BACKUP_BUCKET}/${s3_key}" --region "$AWS_REGION" | awk '{print $3}')
-                log "  S3 backup size: $(numfmt --to=iec --suffix=B "$s3_size" 2>/dev/null || echo "$s3_size bytes")"
-            else
-                log "✗ Failed to upload backup to S3"
-                # Cleanup on error
-                run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
-                rm -rf "$temp_dir" || true
-                rm -f "$archive_file" || true
-                return 1
-            fi
-        else
-            log "✗ Failed to create archive"
-            # Cleanup on error
-            run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
-            rm -rf "$temp_dir" || true
-            return 1
-        fi
-    else
-        log "✗ Failed to copy data from volume $volume_name"
-        # Cleanup on error
-        run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
-        rm -rf "$temp_dir" || true
-        return 1
-    fi
-
-    # Cleanup on success
-    run_as_ubuntu docker rm -f "$container_id" >/dev/null 2>&1 || true
-    rm -rf "$temp_dir" || true
-    rm -f "$archive_file" || true
-
-    log "✓ OpenWebUI backup completed successfully"
+  else
+    "$@"
+  fi
 }
 
-# Check required tools are available
-for cmd in docker aws tar numfmt; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        log "ERROR: Required command not found: $cmd"
-        exit 1
+# Shortcuts for docker and docker compose
+d() { run_as_ubuntu docker "$@"; }
+dc() { run_as_ubuntu docker compose "$@"; }
+
+# Track quiesced services and temp dirs for cleanup
+PAUSED_SERVICES=()
+STOPPED_SERVICES=()
+TEMP_DIRS=()
+cleanup() {
+  # Unpause or start services as needed
+  if [[ "${#PAUSED_SERVICES[@]}" -gt 0 ]]; then
+    for svc in "${PAUSED_SERVICES[@]}"; do
+      dc unpause "$svc" >/dev/null 2>&1 || true
+    done
+  fi
+  if [[ "${#STOPPED_SERVICES[@]}" -gt 0 ]]; then
+    for svc in "${STOPPED_SERVICES[@]}"; do
+      dc start "$svc" >/dev/null 2>&1 || true
+    done
+  fi
+  # Remove temp directories
+  if [[ "${#TEMP_DIRS[@]}" -gt 0 ]]; then
+    for tdir in "${TEMP_DIRS[@]}"; do
+      rm -rf "$tdir" >/dev/null 2>&1 || true
+    done
+  fi
+}
+trap cleanup EXIT
+
+check_prereqs() {
+  local missing=()
+
+  for cmd in docker aws tar; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  # docker compose (plugin) check
+  if ! docker compose version >/dev/null 2>&1; then
+    missing+=("docker-compose-plugin")
+  fi
+  # sudo is needed only if not ubuntu user but ubuntu user exists
+  if id -u ubuntu >/dev/null 2>&1 && [[ "$(id -un)" != "ubuntu" ]]; then
+    command -v sudo >/dev/null 2>&1 || missing+=("sudo")
+  fi
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    die "Missing prerequisites: ${missing[*]}"
+  fi
+}
+
+ensure_compose_dir() {
+  if [[ ! -d "$COMPOSE_DIR" ]]; then
+    die "Compose directory not found: $COMPOSE_DIR"
+  fi
+  cd "$COMPOSE_DIR"
+}
+
+detect_project_name() {
+  local from_file
+  # Extract "name:" from compose.yml (simple YAML parse)
+  if [[ -f "compose.yml" ]]; then
+    from_file="$(sed -n -E 's/^[[:space:]]*name:[[:space:]]*([A-Za-z0-9_.-]+).*/\1/p' compose.yml | head -n1 || true)"
+  fi
+  if [[ -n "${from_file:-}" ]]; then
+    PROJECT_NAME="$from_file"
+  else
+    # Fallback: directory name
+    PROJECT_NAME="$(basename "$COMPOSE_DIR")"
+  fi
+  log "Detected Compose project name: $PROJECT_NAME"
+}
+
+resolve_backup_bucket() {
+  if [[ -n "${BACKUP_BUCKET:-}" ]]; then
+    return 0
+  fi
+
+  # Terraform discovery (optional)
+  if command -v terraform >/dev/null 2>&1 && [[ -d "/opt/app/terraform" ]]; then
+    BACKUP_BUCKET="$(terraform -chdir=/opt/app/terraform output -raw backup_bucket 2>/dev/null || true)"
+    if [[ -n "$BACKUP_BUCKET" ]]; then
+      log "Discovered backup bucket via Terraform: $BACKUP_BUCKET"
+      return 0
     fi
-done
+    warn "Terraform present but could not read output 'backup_bucket' (is state initialized?)."
+  fi
 
-# List all Docker volumes for debugging
-log "Available Docker volumes:"
-run_as_ubuntu docker volume ls
+  die "No BACKUP_BUCKET provided and Terraform discovery failed. Set BACKUP_BUCKET env var."
+}
 
-log "Docker Compose project status:"
-run_as_ubuntu docker compose ps
+ensure_helper_image() {
+  if ! d image inspect "$HELPER_IMAGE" >/dev/null 2>&1; then
+    log "Pulling helper image: $HELPER_IMAGE"
+    d pull "$HELPER_IMAGE"
+  fi
+}
 
-# Backup only OpenWebUI volume
-backup_openwebui
+human_bytes() {
+  local bytes="$1"
+  if command -v numfmt >/dev/null 2>&1; then
+    numfmt --to=iec --suffix=B "$bytes" 2>/dev/null || echo "${bytes} bytes"
+  else
+    echo "${bytes} bytes"
+  fi
+}
 
-log "Listing recent backups in S3:"
-aws s3 ls "s3://${BACKUP_BUCKET}/backups/" --region "$AWS_REGION" --human-readable --summarize | tail -10
+quiesce_services() {
+  # We quiesce services that write to the volumes we back up.
+  # - openwebui -> openwebui-data
+  # - caddy     -> caddy-data, caddy-config
+  local services=()
+  # include only relevant services based on targets
+  local need_openwebui=false need_caddy=false
+  for tgt in "${TARGETS[@]}"; do
+    case "$tgt" in
+      openwebui-data) need_openwebui=true ;;
+      caddy-data|caddy-config) need_caddy=true ;;
+    esac
+  done
+  $need_openwebui && services+=("openwebui")
+  $need_caddy && services+=("caddy")
+  if [[ "${#services[@]}" -eq 0 || "$QUIESCE_MODE" == "none" ]]; then
+    log "Skipping quiesce (mode=$QUIESCE_MODE; services derived: none)"
+    return 0
+  fi
 
-log "Backup process completed"
+  case "$QUIESCE_MODE" in
+    pause)
+      log "Pausing services: ${services[*]}"
+      for svc in "${services[@]}"; do
+        dc pause "$svc" >/dev/null 2>&1 || true
+        PAUSED_SERVICES+=("$svc")
+      done
+      ;;
+    stop)
+      log "Stopping services: ${services[*]}"
+      for svc in "${services[@]}"; do
+        dc stop "$svc" >/dev/null 2>&1 || true
+        STOPPED_SERVICES+=("$svc")
+      done
+      ;;
+    *)
+      warn "Unknown QUIESCE_MODE=$QUIESCE_MODE; skipping quiesce"
+      ;;
+  esac
+}
+
+backup_volume() {
+  local short_name="$1"              # e.g., openwebui-data
+  local volume_name="${PROJECT_NAME}_${short_name}"
+  local archive_name="${short_name}_${TIMESTAMP}.tar.gz"
+  local s3_key="${S3_PREFIX}/${archive_name}"
+
+  log "Backing up volume: $volume_name"
+
+  # Check volume existence
+  if ! d volume inspect "$volume_name" >/dev/null 2>&1; then
+    warn "Volume not found, skipping: $volume_name"
+    return 0
+  fi
+
+  # Probe contents (guarded against failure)
+  local file_count size_str
+  file_count="$(d run --rm -v "${volume_name}:/source:ro" "$HELPER_IMAGE" bash -lc 'shopt -s dotglob nullglob; find /source -type f | wc -l' 2>/dev/null || echo "unknown")"
+  size_str="$(d run --rm -v "${volume_name}:/source:ro" "$HELPER_IMAGE" bash -lc 'du -sh /source 2>/dev/null | cut -f1' 2>/dev/null || echo "unknown")"
+  log "Volume content: files=${file_count}, size=${size_str}"
+
+  # Prepare temp dir to receive archive
+  local tdir
+  tdir="$(mktemp -d "/tmp/${volume_name//\//_}.XXXXXX")"
+  TEMP_DIRS+=("$tdir")
+  local archive_path="${tdir}/${archive_name}"
+
+  # Create archive inside helper container
+  log "Creating archive: ${archive_path}"
+  # Build inner command carefully with quoting
+  local inner_cmd
+  inner_cmd=$(
+    cat <<EOF
+set -euo pipefail
+shopt -s dotglob nullglob
+if [ -z "\$(ls -A /source 2>/dev/null)" ]; then
+  # empty volume -> create empty tar
+  tar -czf "/backup/${archive_name}" -T /dev/null
+else
+  tar -C /source -czf "/backup/${archive_name}" .
+fi
+EOF
+  )
+  d run --rm \
+    -v "${volume_name}:/source:ro" \
+    -v "${tdir}:/backup" \
+    "$HELPER_IMAGE" bash -lc "$inner_cmd"
+
+  # Local archive stats
+  local bytes=""; bytes="$(stat -c%s "$archive_path" 2>/dev/null || stat -f%z "$archive_path" 2>/dev/null || echo "")"
+  if [[ -n "$bytes" ]]; then
+    log "Archive created, size=$(human_bytes "$bytes")"
+  else
+    log "Archive created"
+  fi
+
+  # Build S3 SSE args if requested
+  local -a s3_args=(--region "$AWS_REGION")
+  if [[ -n "${S3_KMS_KEY_ID:-}" ]]; then
+    s3_args+=(--sse aws:kms --sse-kms-key-id "$S3_KMS_KEY_ID")
+  elif [[ "${FORCE_SSE_AES256:-false}" == "true" ]]; then
+    s3_args+=(--sse AES256)
+  fi
+
+  # Upload to S3
+  log "Uploading to s3://${BACKUP_BUCKET}/${s3_key}"
+  if aws s3 cp "$archive_path" "s3://${BACKUP_BUCKET}/${s3_key}" "${s3_args[@]}"; then
+    # Verify with head-object (reliable size)
+    local s3_len=""
+    s3_len="$(aws s3api head-object --bucket "$BACKUP_BUCKET" --key "$s3_key" --region "$AWS_REGION" --query 'ContentLength' --output text 2>/dev/null || echo "")"
+    if [[ -n "$s3_len" && "$s3_len" != "None" ]]; then
+      log "Uploaded OK, remote size=$(human_bytes "$s3_len")"
+    else
+      log "Uploaded OK (size check unavailable)"
+    fi
+  else
+    die "Failed to upload ${archive_name} to s3://${BACKUP_BUCKET}/${s3_key}"
+  fi
+
+  # Remove temp dir for this volume immediately (also covered by trap)
+  rm -rf "$tdir" >/dev/null 2>&1 || true
+}
+
+list_recent_backups() {
+  log "Recent backups in s3://${BACKUP_BUCKET}/${S3_PREFIX}/"
+  if aws s3 ls "s3://${BACKUP_BUCKET}/${S3_PREFIX}/" --region "$AWS_REGION" --human-readable --summarize >/tmp/s3_list.$$ 2>/dev/null; then
+    tail -n 20 /tmp/s3_list.$$ || true
+    rm -f /tmp/s3_list.$$ || true
+  else
+    warn "Could not list backups (insufficient permissions or bucket/region mismatch)"
+  fi
+}
+
+main() {
+  log "Starting backup"
+  check_prereqs
+  ensure_compose_dir
+  detect_project_name
+  resolve_backup_bucket
+  ensure_helper_image
+
+  log "Compose project status (pre-backup):"
+  dc ps || true
+
+  quiesce_services
+
+  local failures=0
+  for tgt in "${TARGETS[@]}"; do
+    if ! backup_volume "$tgt"; then
+      warn "Backup failed for: $tgt"
+      failures=$((failures + 1))
+    fi
+  done
+
+  # Resume services before any non-critical post-steps
+  # (cleanup trap also ensures resume if we exit here)
+  if [[ "${#PAUSED_SERVICES[@]}" -gt 0 ]]; then
+    log "Unpausing services: ${PAUSED_SERVICES[*]}"
+    for svc in "${PAUSED_SERVICES[@]}"; do
+      dc unpause "$svc" >/dev/null 2>&1 || true
+    done
+    PAUSED_SERVICES=()
+  fi
+  if [[ "${#STOPPED_SERVICES[@]}" -gt 0 ]]; then
+    log "Starting services: ${STOPPED_SERVICES[*]}"
+    for svc in "${STOPPED_SERVICES[@]}"; do
+      dc start "$svc" >/dev/null 2>&1 || true
+    done
+    STOPPED_SERVICES=()
+  fi
+
+  list_recent_backups
+
+  if [[ $failures -gt 0 ]]; then
+    die "Backup completed with $failures failure(s)"
+  fi
+
+  log "Backup process completed successfully"
+}
+
+main "$@"
