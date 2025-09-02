@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 #Requires -Version 7.0
 
 param(
@@ -85,23 +85,23 @@ function Send-AppCommand {
 
     Write-Host "Executing: $Action" -ForegroundColor Green
     aws ssm send-command `
-        --document-name "llm-app-management" `
-        --targets "Key=instanceids,Values=$INSTANCE_ID" `
-        --parameters "action=$Action,lines=$LogLines" `
-        --region $REGION `
-        --output table
-}
-
-# Check prerequisites
-if (-not (Test-SessionManagerPlugin)) {
-    exit 1
+      --document-name "llm-app-management" `
+      --instance-ids $INSTANCE_ID `
+      --parameters "action=$Action,lines=$LogLines" `
+      --region $REGION `
+      --output table
 }
 
 Get-InstanceId
 
 switch ($Command) {
     { $_ -in @("status", "update", "restart", "backup", "redeploy") } {
-        $action = if ($_ -eq "update") { "update-images" } else { $_ }
+        switch ($_){
+          "update"  { $action = "update-images" }
+          "restart" { $action = "restart-stack" }
+          "backup"  { $action = "backup-volumes" }
+          default   { $action = $_ }
+        }
         Send-AppCommand -Action $action
     }
 
@@ -129,6 +129,7 @@ switch ($Command) {
     }
 
     "shell" {
+        if (-not (Test-SessionManagerPlugin)) { exit 1 }
         aws ssm start-session --target $INSTANCE_ID --region $REGION
     }
 
