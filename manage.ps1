@@ -77,40 +77,80 @@ Examples:
 "@
 }
 
-function Send-AppCommand {
+function Invoke-AppCommand {
     param(
-        [string]$Action,
-        [string]$LogLines = "50"
+        [string]$ScriptCommand
     )
 
-    Write-Host "Executing: $Action" -ForegroundColor Green
-    aws ssm send-command `
-      --document-name "llm-app-management" `
-      --instance-ids $INSTANCE_ID `
-      --parameters "action=$Action,lines=$LogLines" `
-      --region $REGION `
-      --output table
+    if (-not (Test-SessionManagerPlugin)) { exit 1 }
+
+    Write-Host "Executing: $ScriptCommand" -ForegroundColor Green
+    Write-Host "Starting interactive session..." -ForegroundColor Yellow
+
+    aws ssm start-session --target $INSTANCE_ID --region $REGION --document-name "AWS-StartInteractiveCommand" --parameters "command=`"$ScriptCommand`""
 }
 
 Get-InstanceId
 
 switch ($Command) {
-    { $_ -in @("status", "update", "restart", "backup", "redeploy") } {
-        switch ($_){
-          "update"  { $action = "update-images" }
-          "restart" { $action = "restart-stack" }
-          "backup"  { $action = "backup-volumes" }
-          default   { $action = $_ }
+    "status" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/status.sh"
+    }
+
+    "update" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/update-images.sh"
+    }
+
+    "restart" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/restart-stack.sh"
+    }
+
+    "restart-caddy" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/restart-service.sh caddy"
+    }
+
+    "restart-openwebui" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/restart-service.sh openwebui"
+    }
+
+    "restart-litellm" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/restart-service.sh litellm"
+    }
+
+    "backup" {
+        # Set backup bucket environment variable
+        $backupBucket = terraform -chdir=terraform output -raw backup_bucket 2>$null
+        if ($backupBucket) {
+            Invoke-AppCommand "cd /opt/app && BACKUP_BUCKET=$backupBucket bash scripts/backup-volumes.sh"
+        } else {
+            Invoke-AppCommand "cd /opt/app && bash scripts/backup-volumes.sh"
         }
-        Send-AppCommand -Action $action
     }
 
-    { $_ -in @("restart-caddy", "restart-openwebui", "restart-litellm") } {
-        Send-AppCommand -Action $_
+    "list-backups" {
+        # Set backup bucket environment variable
+        $backupBucket = terraform -chdir=terraform output -raw backup_bucket 2>$null
+        if ($backupBucket) {
+            Invoke-AppCommand "cd /opt/app && BACKUP_BUCKET=$backupBucket bash scripts/restore-volumes.sh"
+        } else {
+            Invoke-AppCommand "cd /opt/app && bash scripts/restore-volumes.sh"
+        }
     }
 
-    { $_ -in @("logs-caddy", "logs-openwebui", "logs-litellm") } {
-        Send-AppCommand -Action $_ -LogLines $Lines
+    "redeploy" {
+        Invoke-AppCommand "cd /opt/app && bash scripts/redeploy.sh"
+    }
+
+    "logs-caddy" {
+        Invoke-AppCommand "cd /opt/app/compose && docker compose logs --tail=$Lines caddy"
+    }
+
+    "logs-openwebui" {
+        Invoke-AppCommand "cd /opt/app/compose && docker compose logs --tail=$Lines openwebui"
+    }
+
+    "logs-litellm" {
+        Invoke-AppCommand "cd /opt/app/compose && docker compose logs --tail=$Lines litellm"
     }
 
     "stop" {
@@ -131,14 +171,6 @@ switch ($Command) {
     "shell" {
         if (-not (Test-SessionManagerPlugin)) { exit 1 }
         aws ssm start-session --target $INSTANCE_ID --region $REGION
-    }
-
-    "list-backups" {
-        Send-AppCommand -Action "list-backups"
-    }
-
-    "backup-volumes" {
-        Send-AppCommand -Action "backup-volumes"
     }
 
     default {

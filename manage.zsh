@@ -4,8 +4,8 @@ set -euo pipefail
 REGION="eu-central-1"
 INSTANCE_ID=""
 
-# Check for session-manager-plugin (only required for 'shell')
-check_session_manager_for_shell() {
+# Check for session-manager-plugin
+check_session_manager() {
     if ! command -v session-manager-plugin &> /dev/null; then
         echo "Error: session-manager-plugin is not installed or not in PATH"
         echo ""
@@ -60,41 +60,68 @@ Examples:
 EOF
 }
 
-send_app_command() {
-    local action="$1"
-    local lines="${2:-50}"
+invoke_app_command() {
+    local script_command="$1"
 
-    echo "Executing: $action"
-    aws ssm send-command \
-      --document-name "llm-app-management" \
-      --instance-ids "$INSTANCE_ID" \
-      --parameters "action=$action,lines=$lines" \
-      --region "$REGION" \
-      --output table
+    check_session_manager || exit 1
+
+    echo "Executing: $script_command"
+    echo "Starting interactive session..."
+
+    aws ssm start-session --target "$INSTANCE_ID" --region "$REGION" --document-name "AWS-StartInteractiveCommand" --parameters "command=\"$script_command\""
 }
 
-# No global plugin check; only for 'shell'
 get_instance_id
 
 case "${1:-}" in
-    status|update|restart|backup|redeploy)
-        # Map friendly commands to SSM allowed values
-        case "$1" in
-          update)   action="update-images" ;;
-          restart)  action="restart-stack" ;;
-          backup)   action="backup-volumes" ;;
-          *)        action="$1" ;;
-        esac
-        send_app_command "$action"
+    status)
+        invoke_app_command "cd /opt/app && bash scripts/status.sh"
         ;;
-    restart-caddy|restart-openwebui|restart-litellm)
-        send_app_command "$1"
+    update)
+        invoke_app_command "cd /opt/app && bash scripts/update-images.sh"
+        ;;
+    restart)
+        invoke_app_command "cd /opt/app && bash scripts/restart-stack.sh"
+        ;;
+    restart-caddy)
+        invoke_app_command "cd /opt/app && bash scripts/restart-service.sh caddy"
+        ;;
+    restart-openwebui)
+        invoke_app_command "cd /opt/app && bash scripts/restart-service.sh openwebui"
+        ;;
+    restart-litellm)
+        invoke_app_command "cd /opt/app && bash scripts/restart-service.sh litellm"
+        ;;
+    backup)
+        # Set backup bucket environment variable
+        backup_bucket="$(terraform -chdir=terraform output -raw backup_bucket 2>/dev/null || echo '')"
+        if [[ -n "$backup_bucket" ]]; then
+            invoke_app_command "cd /opt/app && BACKUP_BUCKET=$backup_bucket bash scripts/backup-volumes.sh"
+        else
+            invoke_app_command "cd /opt/app && bash scripts/backup-volumes.sh"
+        fi
         ;;
     list-backups)
-        send_app_command "list-backups"
+        # Set backup bucket environment variable
+        backup_bucket="$(terraform -chdir=terraform output -raw backup_bucket 2>/dev/null || echo '')"
+        if [[ -n "$backup_bucket" ]]; then
+            invoke_app_command "cd /opt/app && BACKUP_BUCKET=$backup_bucket bash scripts/restore-volumes.sh"
+        else
+            invoke_app_command "cd /opt/app && bash scripts/restore-volumes.sh"
+        fi
         ;;
-    logs-caddy|logs-openwebui|logs-litellm)
-        send_app_command "$1" "${2:-50}"
+    redeploy)
+        invoke_app_command "cd /opt/app && bash scripts/redeploy.sh"
+        ;;
+
+    logs-caddy)
+        invoke_app_command "cd /opt/app/compose && docker compose logs --tail=${2:-50} caddy"
+        ;;
+    logs-openwebui)
+        invoke_app_command "cd /opt/app/compose && docker compose logs --tail=${2:-50} openwebui"
+        ;;
+    logs-litellm)
+        invoke_app_command "cd /opt/app/compose && docker compose logs --tail=${2:-50} litellm"
         ;;
     stop)
         echo "Stopping instance..."
@@ -109,7 +136,7 @@ case "${1:-}" in
             --query 'Reservations[0].Instances[0].State.Name' --output text
         ;;
     shell)
-        check_session_manager_for_shell || exit 1
+        check_session_manager || exit 1
         aws ssm start-session --target "$INSTANCE_ID" --region "$REGION"
         ;;
     *)
