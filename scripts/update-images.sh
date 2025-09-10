@@ -17,6 +17,9 @@ cd /opt/app/compose
 log "Pulling latest Docker images..."
 run_as_ubuntu docker compose pull
 
+log "Stopping containers..."
+run_as_ubuntu docker compose down
+
 log "Recreating containers with new images..."
 run_as_ubuntu docker compose up -d
 
