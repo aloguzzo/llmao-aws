@@ -24,6 +24,10 @@ data "aws_ami" "ubuntu_2404_arm64" {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-arm64-server-*"]
   }
+  filter {
+    name = "image-id"
+    values = ["ami-0ed1e06189d76073f"]
+  }
 }
 
 # Security group: only 80/443 open
@@ -123,7 +127,7 @@ locals {
 resource "aws_instance" "app" {
   ami                         = data.aws_ami.ubuntu_2404_arm64.id
   instance_type               = var.instance_type
-  subnet_id                   = element(data.aws_subnets.default_public.ids, 0)
+  subnet_id                   = data.aws_subnets.default_public.ids[0]
   vpc_security_group_ids      = [aws_security_group.app.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2.name
   key_name                    = var.ssh_key_name

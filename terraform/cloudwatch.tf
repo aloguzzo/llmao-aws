@@ -12,7 +12,7 @@ resource "aws_cloudwatch_log_group" "docker" {
 
 resource "aws_cloudwatch_log_group" "system" {
   name              = "/ec2/llm-stack/system"
-  retention_in_days = 30
+  retention_in_days = 7
   tags = {
     Application = "llm-stack"
     Component   = "system"
