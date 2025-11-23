@@ -5,6 +5,10 @@
       api_key: os.environ/OPENAI_API_KEY
       reasoning_effort: low
       verbosity: high
+  - model_name: gpt-5-1
+    litellm_params:
+      model: openai/gpt-5.1
+      api_key: os.environ/OPENAI_API_KEY
 
 litellm_settings:
   drop_params: True
